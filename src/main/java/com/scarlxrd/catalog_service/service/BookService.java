@@ -3,6 +3,7 @@ package com.scarlxrd.catalog_service.service;
 import com.scarlxrd.catalog_service.dto.BookResponseDTO;
 import com.scarlxrd.catalog_service.dto.CreateBookDTO;
 import com.scarlxrd.catalog_service.entity.Book;
+import com.scarlxrd.catalog_service.exception.BookAlreadyExistsException;
 import com.scarlxrd.catalog_service.mapper.BookMapper;
 import com.scarlxrd.catalog_service.repository.BookRepository;
 import org.springframework.data.domain.Page;
@@ -25,7 +26,7 @@ public class BookService {
     public BookResponseDTO create(CreateBookDTO dto){
 
         repository.findByIsbn(dto.getIsbn()).ifPresent(b ->{
-            throw new IllegalArgumentException("ISBN already exists");
+            throw new BookAlreadyExistsException("ISBN already exists");
         });
 
         Book book = mapper.toEntity(dto);

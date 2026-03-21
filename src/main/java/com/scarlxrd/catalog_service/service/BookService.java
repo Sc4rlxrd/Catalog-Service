@@ -25,7 +25,7 @@ public class BookService {
     public BookResponseDTO create(CreateBookDTO dto){
 
         repository.findByIsbn(dto.getIsbn()).ifPresent(b ->{
-            throw new RuntimeException("ISBN already exists");
+            throw new IllegalArgumentException("ISBN already exists");
         });
 
         Book book = mapper.toEntity(dto);
@@ -39,4 +39,34 @@ public class BookService {
         return bookPage.map(mapper::toResponse);
     }
 
+    @Transactional(readOnly = true)
+    public Page<BookResponseDTO> searchByAuthor(String author, Pageable pageable){
+        return repository.findByAuthorContainingIgnoreCase(author,pageable).map(mapper::toResponse);
+    }
+
+    @Transactional(readOnly = true)
+    public Page<BookResponseDTO> searchByTitle(String title, Pageable pageable){
+        return repository.findByTitleContainingIgnoreCase(title, pageable)
+                .map(mapper::toResponse);
+    }
+
+    @Transactional(readOnly = true)
+    public Page<BookResponseDTO> filterByPrice(Double min, Double max, Pageable pageable){
+        return repository.findByPriceBetween(min, max, pageable)
+                .map(mapper::toResponse);
+    }
+
+    @Transactional
+    public void decreaseStock(String bookId, int quantity){
+        Book book = repository.findById(java.util.UUID.fromString(bookId))
+                .orElseThrow(() -> new RuntimeException("Book not found"));
+
+        if(book.getStock() < quantity){
+            throw new RuntimeException("Insufficient stock");
+        }
+
+        book.setStock(book.getStock() - quantity);
+
+        repository.save(book);
+    }
 }

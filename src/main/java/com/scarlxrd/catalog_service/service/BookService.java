@@ -1,26 +1,28 @@
 package com.scarlxrd.catalog_service.service;
 
 import com.scarlxrd.catalog_service.dto.BookResponseDTO;
+import com.scarlxrd.catalog_service.dto.BookValidatedEvent;
+import com.scarlxrd.catalog_service.dto.BookValidationRequest;
 import com.scarlxrd.catalog_service.dto.CreateBookDTO;
 import com.scarlxrd.catalog_service.entity.Book;
 import com.scarlxrd.catalog_service.exception.BookAlreadyExistsException;
+import com.scarlxrd.catalog_service.exception.BookNotExistsException;
 import com.scarlxrd.catalog_service.mapper.BookMapper;
 import com.scarlxrd.catalog_service.repository.BookRepository;
+import lombok.RequiredArgsConstructor;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+@RequiredArgsConstructor
 @Service
 public class BookService {
 
     private  final BookRepository repository;
     private final BookMapper mapper;
-
-    public BookService(BookRepository repository, BookMapper mapper) {
-        this.repository = repository;
-        this.mapper = mapper;
-    }
+    private final RabbitTemplate rabbitTemplate;
 
     @Transactional
     public BookResponseDTO create(CreateBookDTO dto){
@@ -69,5 +71,29 @@ public class BookService {
         book.setStock(book.getStock() - quantity);
 
         repository.save(book);
+    }
+
+    // FOR RABBITMQ
+    @Transactional
+    public void processValidation(BookValidationRequest request) {
+
+        Book book = repository.findByIsbn(request.getIsbn())
+                .orElseThrow(() -> new BookNotExistsException("Book not found"));
+
+        boolean available = book.getStock() >= request.getQuantity();
+
+        BookValidatedEvent event = new BookValidatedEvent(
+                request.getOrderId(),
+                request.getIsbn(),
+                book.getId(),
+                book.getPrice(),
+                available
+        );
+
+        rabbitTemplate.convertAndSend(
+                "book.events",
+                "book.validated",
+                event
+        );
     }
 }

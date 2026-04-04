@@ -16,6 +16,8 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
+
 @RequiredArgsConstructor
 @Service
 public class BookService {
@@ -77,17 +79,18 @@ public class BookService {
     @Transactional
     public void processValidation(BookValidationRequest request) {
 
-        Book book = repository.findByIsbn(request.getIsbn())
+        Book book = repository.findById(request.getBookId())
                 .orElseThrow(() -> new BookNotExistsException("Book not found"));
 
         boolean available = book.getStock() >= request.getQuantity();
 
         BookValidatedEvent event = new BookValidatedEvent(
                 request.getOrderId(),
-                request.getIsbn(),
+                book.getIsbn(),
                 book.getId(),
                 book.getPrice(),
-                available
+                available,
+                request.getQuantity()
         );
 
         rabbitTemplate.convertAndSend(

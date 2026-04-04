@@ -8,7 +8,7 @@ import java.util.UUID;
 public class BookValidationRequest {
 
     private UUID orderId;
-    private String isbn;
+    private UUID bookId;
     private int quantity;
 
 }

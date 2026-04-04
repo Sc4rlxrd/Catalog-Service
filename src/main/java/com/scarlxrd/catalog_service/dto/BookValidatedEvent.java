@@ -18,4 +18,5 @@ public class BookValidatedEvent {
     private UUID bookId;
     private BigDecimal price;
     private boolean available;
+    private int quantity;
 }

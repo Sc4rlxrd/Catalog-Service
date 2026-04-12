@@ -60,4 +60,10 @@ public class BookController {
         service.decreaseStock(id, quantity);
     }
 
+    @GetMapping("/my-favorites")
+    public ResponseEntity<?> getFavorites(@RequestHeader("X-User-Email") String userEmail) {
+
+        return ResponseEntity.ok("Buscando favoritos no banco de dados para: " + userEmail);
+    }
+
 }

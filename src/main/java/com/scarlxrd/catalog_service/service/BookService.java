@@ -7,6 +7,7 @@ import com.scarlxrd.catalog_service.dto.CreateBookDTO;
 import com.scarlxrd.catalog_service.entity.Book;
 import com.scarlxrd.catalog_service.exception.BookAlreadyExistsException;
 import com.scarlxrd.catalog_service.exception.BookNotExistsException;
+import com.scarlxrd.catalog_service.exception.InsufficientStockException;
 import com.scarlxrd.catalog_service.mapper.BookMapper;
 import com.scarlxrd.catalog_service.repository.BookRepository;
 import lombok.RequiredArgsConstructor;
@@ -15,8 +16,6 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-
-import java.math.BigDecimal;
 
 @RequiredArgsConstructor
 @Service
@@ -64,10 +63,10 @@ public class BookService {
     @Transactional
     public void decreaseStock(String bookId, int quantity){
         Book book = repository.findById(java.util.UUID.fromString(bookId))
-                .orElseThrow(() -> new RuntimeException("Book not found"));
+                .orElseThrow(() -> new BookNotExistsException("Book not found"));
 
         if(book.getStock() < quantity){
-            throw new RuntimeException("Insufficient stock");
+            throw new InsufficientStockException("Insufficient stock");
         }
 
         book.setStock(book.getStock() - quantity);

@@ -2,21 +2,25 @@ package com.scarlxrd.catalog_service.service;
 
 import com.scarlxrd.catalog_service.dto.*;
 import com.scarlxrd.catalog_service.entity.Book;
+import com.scarlxrd.catalog_service.entity.ProcessedEvent;
 import com.scarlxrd.catalog_service.exception.BookAlreadyExistsException;
 import com.scarlxrd.catalog_service.exception.BookNotExistsException;
 import com.scarlxrd.catalog_service.exception.InsufficientStockException;
 import com.scarlxrd.catalog_service.mapper.BookMapper;
 import com.scarlxrd.catalog_service.repository.BookRepository;
+import com.scarlxrd.catalog_service.repository.ProcessedEventRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.*;
 
 import java.math.BigDecimal;
@@ -39,6 +43,9 @@ class BookServiceTest {
 
     @Mock
     private RabbitTemplate rabbitTemplate;
+
+    @Mock
+    private ProcessedEventRepository processedEventRepository;
 
     @InjectMocks
     private BookService bookService;
@@ -267,6 +274,11 @@ class BookServiceTest {
             bookService.processValidation(request);
 
             // Then
+            ArgumentCaptor<ProcessedEvent> captor = ArgumentCaptor.forClass(ProcessedEvent.class);
+            verify(processedEventRepository).save(captor.capture());
+
+            assertThat(captor.getValue().getId())
+                    .contains(request.getOrderId().toString());
             verify(rabbitTemplate).convertAndSend(
                     eq("book.events"),
                     eq("book.validated"),
@@ -334,6 +346,42 @@ class BookServiceTest {
             assertThat(event.getQuantity()).isEqualTo(5);
             assertThat(event.getPrice()).isEqualByComparingTo(book.getPrice());
             assertThat(event.isAvailable()).isTrue();
+        }
+
+        @Test
+        @DisplayName("Deve seguir ordem correta: salvar evento antes de buscar livro")
+        void shouldRespectExecutionOrder() {
+            BookValidationRequest request = new BookValidationRequest();
+            request.setOrderId(UUID.randomUUID());
+            request.setBookId(book.getId());
+            request.setQuantity(5);
+
+            when(repository.findById(book.getId())).thenReturn(Optional.of(book));
+
+            bookService.processValidation(request);
+
+            InOrder inOrder = inOrder(processedEventRepository, repository);
+
+            inOrder.verify(processedEventRepository).save(any());
+            inOrder.verify(repository).findById(any());
+        }
+
+        @Test
+        @DisplayName("Não deve processar evento duplicado (idempotência)")
+        void shouldIgnoreDuplicateEvent() {
+            BookValidationRequest request = new BookValidationRequest();
+            request.setOrderId(UUID.randomUUID());
+            request.setBookId(book.getId());
+            request.setQuantity(5);
+
+            doThrow(DataIntegrityViolationException.class)
+                    .when(processedEventRepository)
+                    .save(any());
+
+            bookService.processValidation(request);
+
+            verify(repository, never()).findById(any());
+            verify(rabbitTemplate, never()).convertAndSend(Optional.ofNullable(any()), any(), any());
         }
     }
 }

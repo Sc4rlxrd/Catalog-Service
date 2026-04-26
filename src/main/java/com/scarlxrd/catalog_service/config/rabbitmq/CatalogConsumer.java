@@ -14,7 +14,10 @@ public class CatalogConsumer {
 
     private final BookService service;
 
-    @RabbitListener(queues = "book.validate.queue")
+    @RabbitListener(
+            queues = "book.validate.queue",
+            containerFactory = "rabbitListenerContainerFactory"
+    )
     public void handle(BookValidationRequest request){
 
         log.info("Event received: {}",request);

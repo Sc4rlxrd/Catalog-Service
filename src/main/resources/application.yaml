@@ -2,6 +2,8 @@ server:
   port: 8081
 
 spring:
+  application:
+    name: catalog-service
   datasource:
     platform: postgres
     url: jdbc:postgresql://localhost:5433/books
@@ -25,3 +27,19 @@ jpa:
   hibernate:
     ddl-auto: validate # apenas valida/atualiza schema
     deferred-datasource-initialization: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, info, prometheus, metrics
+  endpoint:
+    health:
+      show-details: always
+  metrics:
+    tags:
+      application: ${spring.application.name}
+
+tracing:
+  sampling:
+    probability: 1.0

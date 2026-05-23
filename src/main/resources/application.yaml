@@ -28,6 +28,7 @@ jpa:
     ddl-auto: validate # apenas valida/atualiza schema
     deferred-datasource-initialization: true
 
+
 management:
   endpoints:
     web:
@@ -39,13 +40,20 @@ management:
   metrics:
     tags:
       application: ${spring.application.name}
-
-tracing:
-  sampling:
-    probability: 1.0
-zipkin:
   tracing:
-    endpoint: "http://localhost:9411/api/v2/spans"
+    sampling:
+      probability: 1.0
+  zipkin:
+    tracing:
+      endpoint: "http://localhost:9411/api/v2/spans"
+
+logging:
+#  level:
+#    io.micrometer.tracing: DEBUG
+#    zipkin: DEBUG
+#    brave: DEBUG
+  pattern:
+    correlation: "[traceId=%X{traceId:-} spanId=%X{spanId:-} orderId=%X{orderId:-}] "
 springdoc:
   api-docs:
     path: /v3/api-docs

@@ -20,8 +20,8 @@ public class CatalogConsumer {
     )
     public void handle(BookValidationRequest request){
 
-        log.info("Event received: {}",request);
-        service.processValidation(request);
+            log.info("Event received: {}",request);
+            service.processValidation(request);
     }
 
 }

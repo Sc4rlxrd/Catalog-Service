@@ -98,6 +98,8 @@ public class BookService {
 
         boolean available = book.getStock() >= request.getQuantity();
 
+        log.info("Creating a validation event for an order: {}, book: {}", request.getOrderId(), request.getBookId());
+
         BookValidatedEvent event = new BookValidatedEvent(
                 request.getOrderId(),
                 book.getIsbn(),
@@ -106,6 +108,8 @@ public class BookService {
                 available,
                 request.getQuantity()
         );
+
+        log.info("Sending event to RabbitMQ: {}", event);
 
         rabbitTemplate.convertAndSend(
                 "book.events",

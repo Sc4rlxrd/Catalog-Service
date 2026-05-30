@@ -1,9 +1,6 @@
 package com.scarlxrd.catalog_service.service;
 
-import com.scarlxrd.catalog_service.dto.BookResponseDTO;
-import com.scarlxrd.catalog_service.dto.BookValidatedEvent;
-import com.scarlxrd.catalog_service.dto.BookValidationRequest;
-import com.scarlxrd.catalog_service.dto.CreateBookDTO;
+import com.scarlxrd.catalog_service.dto.*;
 import com.scarlxrd.catalog_service.entity.Book;
 import com.scarlxrd.catalog_service.entity.ProcessedEvent;
 import com.scarlxrd.catalog_service.exception.BookAlreadyExistsException;
@@ -86,9 +83,7 @@ public class BookService {
 
         String eventId = request.getOrderId() + "-" + request.getBookId();
 
-        try {
-            processedEventRepository.save(new ProcessedEvent(eventId));
-        } catch (DataIntegrityViolationException e) {
+        if (isDuplicate(eventId)) {
             log.warn("Duplicate event detected at DB level: {}", eventId);
             return;
         }
@@ -116,5 +111,45 @@ public class BookService {
                 "book.validated",
                 event
         );
+    }
+
+    // FOR RABBITMQ
+    @Transactional
+    public void processStockDecrease(StockDecreaseEvent event) {
+
+        log.info("EVENT RECEIVED: {}", event);
+
+        String eventId = event.orderId() + "-" + event.bookId() + "-stock";
+
+        if (isDuplicate(event.eventId().toString())) {
+            log.warn("Duplicate stock event detected: {}", eventId);
+            return;
+        }
+
+        Book book = repository.findById(event.bookId())
+                .orElseThrow(() -> new BookNotExistsException("Book not found"));
+
+        if (book.getStock() < event.quantity()) {
+            throw new InsufficientStockException("Insufficient stock");
+        }
+
+        book.setStock(book.getStock() - event.quantity());
+
+        repository.save(book);
+
+        log.info(
+                "Stock decreased for book {} by {} units",
+                book.getId(),
+                event.quantity()
+        );
+    }
+
+    private boolean isDuplicate(String eventId) {
+        try {
+            processedEventRepository.save(new ProcessedEvent(eventId));
+            return false;
+        } catch (DataIntegrityViolationException e) {
+            return true;
+        }
     }
 }

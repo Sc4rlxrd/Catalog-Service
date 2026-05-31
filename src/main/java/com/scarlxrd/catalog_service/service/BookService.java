@@ -119,10 +119,8 @@ public class BookService {
 
         log.info("EVENT RECEIVED: {}", event);
 
-        String eventId = event.orderId() + "-" + event.bookId() + "-stock";
-
         if (isDuplicate(event.eventId().toString())) {
-            log.warn("Duplicate stock event detected: {}", eventId);
+            log.warn("Duplicate stock event detected: {}", event.eventId());
             return;
         }
 

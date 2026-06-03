@@ -384,4 +384,104 @@ class BookServiceTest {
             verify(rabbitTemplate, never()).convertAndSend(Optional.ofNullable(any()), any(), any());
         }
     }
+
+    @Nested
+    @DisplayName("Baixa de estoque via evento")
+    class StockDecreaseTests {
+
+        @Test
+        @DisplayName("Deve diminuir estoque quando evento for válido")
+        void shouldDecreaseStockWhenEventIsValid() {
+            UUID eventId = UUID.randomUUID();
+            UUID orderId = UUID.randomUUID();
+            UUID bookId = UUID.randomUUID();
+
+            StockDecreaseEvent event = new StockDecreaseEvent(eventId, orderId, bookId, 3);
+
+            Book book = new Book();
+            book.setId(bookId);
+            book.setStock(10);
+
+            when(processedEventRepository.save(any(ProcessedEvent.class)))
+                    .thenReturn(new ProcessedEvent(eventId.toString()));
+
+            when(repository.findById(bookId))
+                    .thenReturn(Optional.of(book));
+
+            bookService.processStockDecrease(event);
+
+            assertThat(book.getStock()).isEqualTo(7);
+
+            verify(repository).save(book);
+            verify(processedEventRepository).save(any(ProcessedEvent.class));
+        }
+
+        @Test
+        @DisplayName("Deve ignorar evento duplicado")
+        void shouldIgnoreDuplicatedStockDecreaseEvent() {
+            UUID eventId = UUID.randomUUID();
+            UUID orderId = UUID.randomUUID();
+            UUID bookId = UUID.randomUUID();
+
+            StockDecreaseEvent event = new StockDecreaseEvent(eventId, orderId, bookId, 3);
+
+            when(processedEventRepository.save(any(ProcessedEvent.class)))
+                    .thenThrow(new DataIntegrityViolationException("duplicated"));
+
+            bookService.processStockDecrease(event);
+
+            verify(repository, never()).findById(any());
+            verify(repository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("Deve lançar erro quando livro não existir")
+        void shouldThrowWhenBookDoesNotExist() {
+            UUID eventId = UUID.randomUUID();
+            UUID orderId = UUID.randomUUID();
+            UUID bookId = UUID.randomUUID();
+
+            StockDecreaseEvent event = new StockDecreaseEvent(eventId, orderId, bookId, 3);
+
+            when(processedEventRepository.save(any(ProcessedEvent.class)))
+                    .thenReturn(new ProcessedEvent(eventId.toString()));
+
+            when(repository.findById(bookId))
+                    .thenReturn(Optional.empty());
+
+            assertThatThrownBy(() -> bookService.processStockDecrease(event))
+                    .isInstanceOf(BookNotExistsException.class)
+                    .hasMessage("Book not found");
+
+            verify(repository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("Deve lançar erro quando estoque for insuficiente")
+        void shouldThrowWhenStockIsInsufficient() {
+            UUID eventId = UUID.randomUUID();
+            UUID orderId = UUID.randomUUID();
+            UUID bookId = UUID.randomUUID();
+
+            StockDecreaseEvent event = new StockDecreaseEvent(eventId, orderId, bookId, 10);
+
+            Book book = new Book();
+            book.setId(bookId);
+            book.setStock(3);
+
+            when(processedEventRepository.save(any(ProcessedEvent.class)))
+                    .thenReturn(new ProcessedEvent(eventId.toString()));
+
+            when(repository.findById(bookId))
+                    .thenReturn(Optional.of(book));
+
+            assertThatThrownBy(() -> bookService.processStockDecrease(event))
+                    .isInstanceOf(InsufficientStockException.class)
+                    .hasMessage("Insufficient stock");
+
+            assertThat(book.getStock()).isEqualTo(3);
+
+            verify(repository, never()).save(any());
+        }
+    }
 }

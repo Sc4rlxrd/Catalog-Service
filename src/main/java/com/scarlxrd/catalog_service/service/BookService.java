@@ -1,5 +1,7 @@
 package com.scarlxrd.catalog_service.service;
 
+import com.scarlxrd.catalog_service.config.metrics.CatalogMetrics;
+import com.scarlxrd.catalog_service.config.metrics.RabbitEventMetrics;
 import com.scarlxrd.catalog_service.dto.*;
 import com.scarlxrd.catalog_service.entity.Book;
 import com.scarlxrd.catalog_service.entity.ProcessedEvent;
@@ -27,6 +29,8 @@ public class BookService {
     private final BookMapper mapper;
     private final RabbitTemplate rabbitTemplate;
     private final ProcessedEventRepository processedEventRepository;
+    private final CatalogMetrics metrics;
+    private final RabbitEventMetrics eventMetrics;
 
     @Transactional
     public BookResponseDTO create(CreateBookDTO dto){
@@ -73,7 +77,6 @@ public class BookService {
         }
 
         book.setStock(book.getStock() - quantity);
-
         repository.save(book);
     }
 
@@ -111,6 +114,12 @@ public class BookService {
                 "book.validated",
                 event
         );
+        eventMetrics.published("book_validated");
+        if (available) {
+            metrics.validated();
+        } else {
+            metrics.cancelled("book_unavailable");
+        }
     }
 
     // FOR RABBITMQ
@@ -121,6 +130,7 @@ public class BookService {
 
         if (isDuplicate(event.eventId().toString())) {
             log.warn("Duplicate stock event detected: {}", event.eventId());
+            eventMetrics.duplicated("book_validated");
             return;
         }
 
@@ -128,12 +138,13 @@ public class BookService {
                 .orElseThrow(() -> new BookNotExistsException("Book not found"));
 
         if (book.getStock() < event.quantity()) {
+            metrics.stockError("insufficient_stock");
             throw new InsufficientStockException("Insufficient stock");
         }
 
         book.setStock(book.getStock() - event.quantity());
-
         repository.save(book);
+        metrics.stockSuccess();
 
         log.info(
                 "Stock decreased for book {} by {} units",

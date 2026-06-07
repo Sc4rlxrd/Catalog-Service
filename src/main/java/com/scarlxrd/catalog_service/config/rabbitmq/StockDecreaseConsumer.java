@@ -1,5 +1,6 @@
 package com.scarlxrd.catalog_service.config.rabbitmq;
 
+import com.scarlxrd.catalog_service.config.metrics.RabbitEventMetrics;
 import com.scarlxrd.catalog_service.dto.StockDecreaseEvent;
 import com.scarlxrd.catalog_service.service.BookService;
 import lombok.RequiredArgsConstructor;
@@ -13,11 +14,13 @@ import org.springframework.stereotype.Component;
 public class StockDecreaseConsumer {
 
     private final BookService bookService;
+    private final RabbitEventMetrics metrics;
 
     @RabbitListener(queues = "stock.decrease.queue")
     public void consume(StockDecreaseEvent event) {
 
         log.info("CONSUMER RECEIVED: {}", event);
+        metrics.consumed("stock_decrease");
 
         bookService.processStockDecrease(event);
     }

@@ -1,5 +1,7 @@
 package com.scarlxrd.catalog_service.service;
 
+import com.scarlxrd.catalog_service.config.metrics.CatalogMetrics;
+import com.scarlxrd.catalog_service.config.metrics.RabbitEventMetrics;
 import com.scarlxrd.catalog_service.dto.*;
 import com.scarlxrd.catalog_service.entity.Book;
 import com.scarlxrd.catalog_service.entity.ProcessedEvent;
@@ -46,6 +48,12 @@ class BookServiceTest {
 
     @Mock
     private ProcessedEventRepository processedEventRepository;
+
+    @Mock
+    private CatalogMetrics metrics;
+
+    @Mock
+    private RabbitEventMetrics eventMetrics;
 
     @InjectMocks
     private BookService bookService;
@@ -275,15 +283,20 @@ class BookServiceTest {
 
             // Then
             ArgumentCaptor<ProcessedEvent> captor = ArgumentCaptor.forClass(ProcessedEvent.class);
-            verify(processedEventRepository).save(captor.capture());
+            verify(processedEventRepository).saveAndFlush(captor.capture());
 
             assertThat(captor.getValue().getId())
                     .contains(request.getOrderId().toString());
+
             verify(rabbitTemplate).convertAndSend(
                     eq("book.events"),
                     eq("book.validated"),
                     any(BookValidatedEvent.class)
             );
+
+            verify(eventMetrics).published("book_validated");
+            verify(metrics).validated();
+            verify(metrics, never()).cancelled(anyString());
         }
 
         @Test
@@ -305,6 +318,10 @@ class BookServiceTest {
             verify(rabbitTemplate).convertAndSend(eq("book.events"), eq("book.validated"), captor.capture());
 
             assertThat(captor.getValue().isAvailable()).isFalse();
+
+            verify(eventMetrics).published("book_validated");
+            verify(metrics).cancelled("book_unavailable");
+            verify(metrics, never()).validated();
         }
 
         @Test
@@ -312,21 +329,27 @@ class BookServiceTest {
         void shouldThrowWhenValidationBookNotFound() {
             // Given
             BookValidationRequest request = new BookValidationRequest();
+            request.setOrderId(UUID.randomUUID());
             request.setBookId(UUID.randomUUID());
+            request.setQuantity(5);
 
             when(repository.findById(request.getBookId())).thenReturn(Optional.empty());
 
             // When / Then
             assertThatThrownBy(() -> bookService.processValidation(request))
-                    .isInstanceOf(BookNotExistsException.class);
+                    .isInstanceOf(BookNotExistsException.class)
+                    .hasMessage("Book not found");
 
             verify(rabbitTemplate, never()).convertAndSend(anyString(), anyString(), Optional.ofNullable(any()));
+            verify(eventMetrics, never()).published(anyString());
+            verify(metrics, never()).validated();
+            verify(metrics, never()).cancelled(anyString());
         }
-
 
         @Test
         @DisplayName("Deve publicar evento com available=true e dados corretos")
         void shouldPublishAvailableTrueWithData() {
+            // Given
             BookValidationRequest request = new BookValidationRequest();
             request.setOrderId(UUID.randomUUID());
             request.setBookId(book.getId());
@@ -334,23 +357,30 @@ class BookServiceTest {
 
             when(repository.findById(book.getId())).thenReturn(Optional.of(book));
 
+            // When
             bookService.processValidation(request);
 
+            // Then
             ArgumentCaptor<BookValidatedEvent> captor = ArgumentCaptor.forClass(BookValidatedEvent.class);
             verify(rabbitTemplate).convertAndSend(eq("book.events"), eq("book.validated"), captor.capture());
 
             BookValidatedEvent event = captor.getValue();
 
             assertThat(event.getOrderId()).isEqualTo(request.getOrderId());
+            assertThat(event.getIsbn()).isEqualTo(book.getIsbn());
             assertThat(event.getBookId()).isEqualTo(book.getId());
             assertThat(event.getQuantity()).isEqualTo(5);
             assertThat(event.getPrice()).isEqualByComparingTo(book.getPrice());
             assertThat(event.isAvailable()).isTrue();
+
+            verify(eventMetrics).published("book_validated");
+            verify(metrics).validated();
         }
 
         @Test
         @DisplayName("Deve seguir ordem correta: salvar evento antes de buscar livro")
         void shouldRespectExecutionOrder() {
+            // Given
             BookValidationRequest request = new BookValidationRequest();
             request.setOrderId(UUID.randomUUID());
             request.setBookId(book.getId());
@@ -358,30 +388,37 @@ class BookServiceTest {
 
             when(repository.findById(book.getId())).thenReturn(Optional.of(book));
 
+            // When
             bookService.processValidation(request);
 
+            // Then
             InOrder inOrder = inOrder(processedEventRepository, repository);
 
-            inOrder.verify(processedEventRepository).save(any());
+            inOrder.verify(processedEventRepository).saveAndFlush(any(ProcessedEvent.class));
             inOrder.verify(repository).findById(any());
         }
 
         @Test
         @DisplayName("Não deve processar evento duplicado (idempotência)")
         void shouldIgnoreDuplicateEvent() {
+            // Given
             BookValidationRequest request = new BookValidationRequest();
             request.setOrderId(UUID.randomUUID());
             request.setBookId(book.getId());
             request.setQuantity(5);
 
-            doThrow(DataIntegrityViolationException.class)
-                    .when(processedEventRepository)
-                    .save(any());
+            when(processedEventRepository.saveAndFlush(any(ProcessedEvent.class)))
+                    .thenThrow(new DataIntegrityViolationException("duplicated"));
 
+            // When
             bookService.processValidation(request);
 
+            // Then
             verify(repository, never()).findById(any());
-            verify(rabbitTemplate, never()).convertAndSend(Optional.ofNullable(any()), any(), any());
+            verify(rabbitTemplate, never()).convertAndSend(anyString(), anyString(), Optional.ofNullable(any()));
+            verify(eventMetrics, never()).published(anyString());
+            verify(metrics, never()).validated();
+            verify(metrics, never()).cancelled(anyString());
         }
     }
 
@@ -392,6 +429,7 @@ class BookServiceTest {
         @Test
         @DisplayName("Deve diminuir estoque quando evento for válido")
         void shouldDecreaseStockWhenEventIsValid() {
+            // Given
             UUID eventId = UUID.randomUUID();
             UUID orderId = UUID.randomUUID();
             UUID bookId = UUID.randomUUID();
@@ -402,63 +440,79 @@ class BookServiceTest {
             book.setId(bookId);
             book.setStock(10);
 
-            when(processedEventRepository.save(any(ProcessedEvent.class)))
+            when(processedEventRepository.saveAndFlush(any(ProcessedEvent.class)))
                     .thenReturn(new ProcessedEvent(eventId.toString()));
 
             when(repository.findById(bookId))
                     .thenReturn(Optional.of(book));
 
+            // When
             bookService.processStockDecrease(event);
 
+            // Then
             assertThat(book.getStock()).isEqualTo(7);
 
             verify(repository).save(book);
-            verify(processedEventRepository).save(any(ProcessedEvent.class));
+            verify(processedEventRepository).saveAndFlush(any(ProcessedEvent.class));
+            verify(metrics).stockSuccess();
+            verify(metrics, never()).stockError(anyString());
+            verify(eventMetrics, never()).duplicated(anyString());
         }
 
         @Test
         @DisplayName("Deve ignorar evento duplicado")
         void shouldIgnoreDuplicatedStockDecreaseEvent() {
+            // Given
             UUID eventId = UUID.randomUUID();
             UUID orderId = UUID.randomUUID();
             UUID bookId = UUID.randomUUID();
 
             StockDecreaseEvent event = new StockDecreaseEvent(eventId, orderId, bookId, 3);
 
-            when(processedEventRepository.save(any(ProcessedEvent.class)))
+            when(processedEventRepository.saveAndFlush(any(ProcessedEvent.class)))
                     .thenThrow(new DataIntegrityViolationException("duplicated"));
 
+            // When
             bookService.processStockDecrease(event);
 
+            // Then
             verify(repository, never()).findById(any());
             verify(repository, never()).save(any());
+            verify(eventMetrics).duplicated("stock_decrease");
+            verify(metrics, never()).stockSuccess();
+            verify(metrics, never()).stockError(anyString());
         }
 
         @Test
         @DisplayName("Deve lançar erro quando livro não existir")
         void shouldThrowWhenBookDoesNotExist() {
+            // Given
             UUID eventId = UUID.randomUUID();
             UUID orderId = UUID.randomUUID();
             UUID bookId = UUID.randomUUID();
 
             StockDecreaseEvent event = new StockDecreaseEvent(eventId, orderId, bookId, 3);
 
-            when(processedEventRepository.save(any(ProcessedEvent.class)))
+            when(processedEventRepository.saveAndFlush(any(ProcessedEvent.class)))
                     .thenReturn(new ProcessedEvent(eventId.toString()));
 
             when(repository.findById(bookId))
                     .thenReturn(Optional.empty());
 
+            // When / Then
             assertThatThrownBy(() -> bookService.processStockDecrease(event))
                     .isInstanceOf(BookNotExistsException.class)
                     .hasMessage("Book not found");
 
             verify(repository, never()).save(any());
+            verify(metrics, never()).stockSuccess();
+            verify(metrics, never()).stockError(anyString());
         }
 
         @Test
         @DisplayName("Deve lançar erro quando estoque for insuficiente")
         void shouldThrowWhenStockIsInsufficient() {
+            // Given
             UUID eventId = UUID.randomUUID();
             UUID orderId = UUID.randomUUID();
             UUID bookId = UUID.randomUUID();
@@ -469,12 +523,13 @@ class BookServiceTest {
             book.setId(bookId);
             book.setStock(3);
 
-            when(processedEventRepository.save(any(ProcessedEvent.class)))
+            when(processedEventRepository.saveAndFlush(any(ProcessedEvent.class)))
                     .thenReturn(new ProcessedEvent(eventId.toString()));
 
             when(repository.findById(bookId))
                     .thenReturn(Optional.of(book));
 
+            // When / Then
             assertThatThrownBy(() -> bookService.processStockDecrease(event))
                     .isInstanceOf(InsufficientStockException.class)
                     .hasMessage("Insufficient stock");
@@ -482,6 +537,8 @@ class BookServiceTest {
             assertThat(book.getStock()).isEqualTo(3);
 
             verify(repository, never()).save(any());
+            verify(metrics).stockError("insufficient_stock");
+            verify(metrics, never()).stockSuccess();
         }
     }
 }

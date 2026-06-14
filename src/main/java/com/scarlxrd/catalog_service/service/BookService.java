@@ -130,7 +130,7 @@ public class BookService {
 
         if (isDuplicate(event.eventId().toString())) {
             log.warn("Duplicate stock event detected: {}", event.eventId());
-            eventMetrics.duplicated("book_validated");
+            eventMetrics.duplicated("stock_decrease");
             return;
         }
 
@@ -155,7 +155,7 @@ public class BookService {
 
     private boolean isDuplicate(String eventId) {
         try {
-            processedEventRepository.save(new ProcessedEvent(eventId));
+            processedEventRepository.saveAndFlush(new ProcessedEvent(eventId));
             return false;
         } catch (DataIntegrityViolationException e) {
             return true;
